@@ -1,0 +1,7 @@
+## Interface: 50504, 11509, 16001
+## Title: Lib: KehetsVerbosity-2.0
+## Notes: Development copy of the message settings library of Kehet's addons
+## Author: Kehet
+
+LibStub\LibStub.lua
+LibKehetsVerbosity-2.0.lua
