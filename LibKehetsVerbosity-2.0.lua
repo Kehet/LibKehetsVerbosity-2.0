@@ -1,6 +1,6 @@
 -- Message types an addon declares, printed where the player chose, with a native settings page to choose it.
 -- Needs only LibStub: no Ace3.
-local MAJOR, MINOR = "LibKehetsVerbosity-2.0", 2
+local MAJOR, MINOR = "LibKehetsVerbosity-2.0", 3
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return
@@ -384,7 +384,16 @@ function lib:SetMessageShown(key, shown)
     SetSetting(self, key, "shown", shown and true or false)
 end
 
---- Print to chat with the name of the addon in front, like AceConsole-3.0 did.
+-- The text in front of chat lines: the addon's chatPrefix, or its name in the AceConsole-3.0 colour.
+-- It is read at each print, so a newer copy of the library that embeds itself again keeps it.
+local function GetChatPrefix(addon)
+    if addon.chatPrefix ~= nil then
+        return tostring(addon.chatPrefix)
+    end
+    return "|cFF33FF99" .. tostring(addon.name) .. "|r: "
+end
+
+--- Print to chat with the name of the addon in front, like AceConsole-3.0 did, or with the addon's chatPrefix.
 -- A chat frame may come before the text. Use it for answers to slash commands, which always show.
 function lib:Print(...)
     local frame, first = DEFAULT_CHAT_FRAME, 1
@@ -397,7 +406,7 @@ function lib:Print(...)
     for index = first, select("#", ...) do
         table.insert(parts, tostring((select(index, ...))))
     end
-    frame:AddMessage("|cFF33FF99" .. tostring(self.name) .. "|r: " .. table.concat(parts, " "))
+    frame:AddMessage(GetChatPrefix(self) .. table.concat(parts, " "))
 end
 
 -- Types in the order they are listed in the settings
@@ -738,6 +747,7 @@ local MIXINS = {
 
 --- Give an addon table the functions of the library.
 -- @param target The addon table. It needs a name, which is shown in front of chat messages and on the page.
+-- An optional chatPrefix replaces the name in front of chat messages, for example "|cFF009900Short|r: ".
 -- @param getProfile Optional function that returns the table the settings are saved in, or nil before the
 -- saved variables are loaded. Without it the settings are saved in target.db.
 function lib:Embed(target, getProfile)

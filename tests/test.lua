@@ -393,6 +393,14 @@ plain:Print("to default")
 DEFAULT_CHAT_FRAME = defaultFrame
 Equal(lines[2], "|cFF33FF99Plain|r: to default", "Print without a frame goes to the default chat window")
 
+-- An addon can give its own chat prefix, and a newer copy of the library that embeds again keeps it
+local short = lib:Embed({ name = "Long Name", chatPrefix = "|cFF009900Short|r: " })
+short:Print(frame, "hi")
+Equal(lines[3], "|cFF009900Short|r: hi", "Print uses the chat prefix of the addon")
+lib:Embed(short)
+short:Print(frame, "again")
+Equal(lines[4], "|cFF009900Short|r: again", "the chat prefix stays after embedding again")
+
 -- Settings page in the native settings
 local Stub
 function Stub()

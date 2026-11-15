@@ -62,6 +62,12 @@ If the addon has its own Settings category, give it, and the page is listed unde
 self:RegisterMessagePage(category)
 ```
 
+Chat messages start with the name of the addon in the colour of AceConsole-3.0. To use other text, give the addon table a `chatPrefix`:
+
+```lua
+local MyAddon = { name = "Kehet's MyAddon", chatPrefix = "|cFF009900MyAddon|r: " }
+```
+
 ## Message type fields
 
 | Field | Default | Meaning |
