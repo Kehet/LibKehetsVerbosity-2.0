@@ -1,6 +1,6 @@
 -- Message types an addon declares, printed where the player chose, with a native settings page to choose it.
 -- Needs only LibStub: no Ace3.
-local MAJOR, MINOR = "LibKehetsVerbosity-2.0", 1
+local MAJOR, MINOR = "LibKehetsVerbosity-2.0", 2
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return
@@ -452,119 +452,175 @@ lib.internal = {
     SetMuted = SetMuted,
 }
 
--- Settings page, made of the native templates so it looks like the rest of the game settings
+-- Settings page, laid out like the native settings lists: a title over a divider, section headers,
+-- and rows with the label on the left and the check box in a column right of the middle
 
-local PAGE_WIDTH = 620
-local SECTION_WIDTH = PAGE_WIDTH - 32
 local ROW_HEIGHT = 26
-local OUTPUT_COLUMN_WIDTH = 280
+local SECTION_HEIGHT = 45
+local LABEL_LEFT = 37
+local INDENT = 15
+local HEADER_HEIGHT = 56
 
 local function HasTemplate(name)
     return C_XMLUtil ~= nil and C_XMLUtil.GetTemplateInfo ~= nil and C_XMLUtil.GetTemplateInfo(name) ~= nil
 end
 
-local function ShowTooltip(control)
-    if control.tooltip then
-        GameTooltip:SetOwner(control, "ANCHOR_RIGHT")
-        GameTooltip:SetText(control.labelText, 1, 1, 1)
-        GameTooltip:AddLine(control.tooltip, nil, nil, nil, true)
+local function HasAtlas(name)
+    return C_Texture ~= nil and C_Texture.GetAtlasInfo ~= nil and C_Texture.GetAtlasInfo(name) ~= nil
+end
+
+local function ShowRowTooltip(row)
+    if row.hover then
+        row.hover:Show()
+    end
+    if row.tooltip then
+        GameTooltip:SetOwner(row.check or row, "ANCHOR_RIGHT")
+        GameTooltip:SetText(row.labelText, 1, 1, 1)
+        GameTooltip:AddLine(row.tooltip, nil, nil, nil, true)
         GameTooltip:Show()
     end
 end
 
-local function CreateCheckbox(parent, label, tooltip, onClick)
-    local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-    check:SetSize(26, 26)
-    check.labelText = label
-    check.tooltip = tooltip
-    check.label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    check.label:SetPoint("LEFT", check, "RIGHT", 2, 0)
-    check.label:SetText(label)
-    check:SetScript("OnClick", onClick)
-    check:SetScript("OnEnter", ShowTooltip)
-    check:SetScript("OnLeave", GameTooltip_Hide)
-    return check
+local function HideRowTooltip(row)
+    if row.hover then
+        row.hover:Hide()
+    end
+    GameTooltip:Hide()
 end
 
-local function SetCheckbox(check, checked, disabled)
-    check:SetChecked(checked and true or false)
-    if disabled then
-        check:Disable()
-        check.label:SetTextColor(0.5, 0.5, 0.5)
+local function SetRowIndent(row, indent)
+    row.label:ClearAllPoints()
+    row.label:SetPoint("LEFT", row, "LEFT", LABEL_LEFT + indent, 0)
+    row.label:SetPoint("RIGHT", row, "CENTER", -85, 0)
+end
+
+-- A row with a label. With onClick it gets a check box, and a click on the label clicks the box,
+-- as in the native settings.
+local function CreateRow(parent, label, tooltip, onClick)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetHeight(ROW_HEIGHT)
+    row.labelText = label
+    row.tooltip = tooltip
+
+    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    row.label:SetJustifyH("LEFT")
+    row.label:SetWordWrap(false)
+    row.label:SetText(label)
+    SetRowIndent(row, 0)
+
+    if onClick then
+        local native = HasTemplate("SettingsCheckboxTemplate")
+        row.check = CreateFrame("CheckButton", nil, row, native and "SettingsCheckboxTemplate" or "UICheckButtonTemplate")
+        if not native then
+            row.check:SetSize(26, 26)
+        end
+        row.check:SetPoint("LEFT", row, "CENTER", -80, 0)
+        row.check:SetScript("OnClick", function(check)
+            onClick(check:GetChecked() and true or false)
+        end)
+        row.check:SetScript("OnEnter", function() ShowRowTooltip(row) end)
+        row.check:SetScript("OnLeave", function() HideRowTooltip(row) end)
+
+        row:EnableMouse(true)
+        row:SetScript("OnMouseUp", function()
+            if row.check:IsEnabled() then
+                row.check:Click()
+            end
+        end)
+    end
+
+    -- The native check box brings the highlight of the whole row; make one where it does not
+    local hover = row.check and row.check.HoverBackground
+    if type(hover) == "table" then
+        row.hover = hover
     else
-        check:Enable()
-        check.label:SetTextColor(1, 1, 1)
+        row.hover = row:CreateTexture(nil, "BACKGROUND")
+        row.hover:SetPoint("TOPLEFT", -10, 0)
+        row.hover:SetPoint("BOTTOMRIGHT", -5, 0)
+        row.hover:SetColorTexture(1, 1, 1, 0.1)
+        row.hover:Hide()
     end
+
+    row:SetScript("OnEnter", ShowRowTooltip)
+    row:SetScript("OnLeave", HideRowTooltip)
+    return row
 end
 
--- A box with a thin border and its title on the border, like the sections of the native settings
-local function CreateSection(parent, title)
-    local template = HasTemplate("TooltipBorderBackdropTemplate") and "TooltipBorderBackdropTemplate" or nil
-    local section = CreateFrame("Frame", nil, parent, template)
-    section:SetWidth(SECTION_WIDTH)
-    if section.SetBackdropColor then
-        section:SetBackdropColor(0.3, 0.3, 0.3, 0.75)
-    end
+local function SetRow(row, checked, disabled)
+    row.check:SetChecked(checked and true or false)
+    row.check:SetEnabled(not disabled)
+    row.label:SetFontObject(disabled and "GameFontDisable" or "GameFontNormal")
+end
 
-    section.title = section:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    section.title:SetPoint("TOPLEFT", section, "TOPLEFT", 3, 13)
-    section.title:SetText(title)
-
-    section.outputs = {}
-    return section
+local function PlaceRow(row, content, y)
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
+    row:SetPoint("RIGHT", content, "RIGHT", 0, 0)
+    row:Show()
+    return y - ROW_HEIGHT
 end
 
 local function BuildPage(addon, page)
-    page.scroll = CreateFrame("ScrollFrame", nil, page, "UIPanelScrollFrameTemplate")
-    page.scroll:SetPoint("TOPLEFT", 0, -4)
+    page.title = page:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
+    page.title:SetPoint("TOPLEFT", 7, -22)
+    page.title:SetText(page.titleText)
+
+    page.divider = page:CreateTexture(nil, "ARTWORK")
+    if HasAtlas("Options_HorizontalDivider") then
+        page.divider:SetAtlas("Options_HorizontalDivider", true)
+        page.divider:SetPoint("TOP", 0, -50)
+    else
+        page.divider:SetColorTexture(1, 1, 1, 0.2)
+        page.divider:SetHeight(1)
+        page.divider:SetPoint("TOPLEFT", 7, -50)
+        page.divider:SetPoint("TOPRIGHT", -7, -50)
+    end
+
+    -- The thin native scroll bar where the client has it
+    local modern = HasTemplate("ScrollFrameTemplate")
+    page.scroll = CreateFrame("ScrollFrame", nil, page, modern and "ScrollFrameTemplate" or "UIPanelScrollFrameTemplate")
+    page.scroll:SetPoint("TOPLEFT", 0, -HEADER_HEIGHT)
     page.scroll:SetPoint("BOTTOMRIGHT", -28, 8)
+    if modern and type(page.scroll.ScrollBar) == "table" and page.scroll.ScrollBar.SetHideIfUnscrollable then
+        page.scroll.ScrollBar:SetHideIfUnscrollable(true)
+    end
 
     local content = CreateFrame("Frame", nil, page.scroll)
-    content:SetSize(PAGE_WIDTH, 1)
+    content:SetSize(1, 1)
     page.scroll:SetScrollChild(content)
     page.content = content
 
-    page.title = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    page.title:SetPoint("TOPLEFT", 16, -12)
-    page.title:SetText(addon.name)
-
-    page.mute = CreateCheckbox(content, "Mute all messages",
+    page.mute = CreateRow(content, "Mute all messages",
         "Turn off every message and sound on this page. Answers to slash commands still print.",
-        function(check)
-            SetMuted(addon, check:GetChecked())
+        function(checked)
+            SetMuted(addon, checked)
             page:Refresh()
         end)
-    page.mute:SetPoint("TOPLEFT", 12, -40)
 
     page.sections = {}
     for _, key in ipairs(GetSortedKeys(addon)) do
         local messageType = lib.types[addon][key]
-        local section = CreateSection(content, messageType.name)
+        local section = { key = key, outputs = {} }
 
-        if messageType.desc then
-            section.desc = section:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-            section.desc:SetJustifyH("LEFT")
-            section.desc:SetWidth(SECTION_WIDTH - 24)
-            section.desc:SetText(messageType.desc)
-        end
+        section.title = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+        section.title:SetJustifyH("LEFT")
+        section.title:SetText(messageType.name)
 
-        section.shown = CreateCheckbox(section, "Show", "Show this message.", function(check)
-            SetSetting(addon, key, "shown", check:GetChecked() and true or false)
+        section.shown = CreateRow(content, "Show", messageType.desc or "Show this message.", function(checked)
+            SetSetting(addon, key, "shown", checked)
             page:Refresh()
         end)
 
         if messageType.sound then
-            section.sound = CreateCheckbox(section, "Play sound",
+            section.sound = CreateRow(content, "Play sound",
                 "Play the sound of this message. The sound plays also when the message is not shown.",
-                function(check)
-                    SetSetting(addon, key, "sound", check:GetChecked() and true or false)
+                function(checked)
+                    SetSetting(addon, key, "sound", checked)
                 end)
         end
 
-        section.showIn = section:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        section.showIn:SetText("Show in")
+        section.showIn = CreateRow(content, "Show in", "Where the message is shown. You can choose more than one.")
 
-        section.key = key
         page.sections[key] = section
     end
 end
@@ -572,58 +628,51 @@ end
 -- Lays the page out again, because the open chat windows and the loaded addons change between visits
 local function RefreshPage(addon, page)
     local content = page.content
-    SetCheckbox(page.mute, IsMuted(addon), false)
+    local width = page.scroll:GetWidth()
+    content:SetWidth(type(width) == "number" and width > 0 and width or 600)
+
+    SetRow(page.mute, IsMuted(addon), false)
+    local y = PlaceRow(page.mute, content, -4)
 
     local outputs = GetSortedOutputs()
-    local y = -76
     for _, key in ipairs(GetSortedKeys(addon)) do
         local section = page.sections[key]
-        local inner = -10
 
-        if section.desc then
-            section.desc:SetPoint("TOPLEFT", 12, inner)
-            inner = inner - section.desc:GetStringHeight() - 6
-        end
+        section.title:ClearAllPoints()
+        section.title:SetPoint("TOPLEFT", content, "TOPLEFT", 7, y - 16)
+        y = y - SECTION_HEIGHT
 
-        section.shown:SetPoint("TOPLEFT", 8, inner)
-        SetCheckbox(section.shown, GetSetting(addon, key, "shown"), IsDisabled(addon, key, "shown"))
+        SetRow(section.shown, GetSetting(addon, key, "shown"), IsDisabled(addon, key, "shown"))
+        y = PlaceRow(section.shown, content, y)
+
         if section.sound then
-            section.sound:SetPoint("TOPLEFT", 8 + OUTPUT_COLUMN_WIDTH, inner)
-            SetCheckbox(section.sound, GetSetting(addon, key, "sound"), IsDisabled(addon, key, "sound"))
+            SetRow(section.sound, GetSetting(addon, key, "sound"), IsDisabled(addon, key, "sound"))
+            y = PlaceRow(section.sound, content, y)
         end
-        inner = inner - ROW_HEIGHT - 4
 
-        section.showIn:SetPoint("TOPLEFT", 12, inner)
-        inner = inner - 18
+        local disabled = IsDisabled(addon, key, "outputs")
+        section.showIn.label:SetFontObject(disabled and "GameFontDisable" or "GameFontNormal")
+        y = PlaceRow(section.showIn, content, y)
 
         local chosen = GetOutputs(addon, key)
-        local disabled = IsDisabled(addon, key, "outputs")
         for index, entry in ipairs(outputs) do
-            local check = section.outputs[index]
-            if not check then
-                check = CreateCheckbox(section, "", nil, function(self)
-                    SetOutput(addon, key, self.output, self:GetChecked() and true or false)
+            local row = section.outputs[index]
+            if not row then
+                row = CreateRow(content, "", nil, function(checked)
+                    SetOutput(addon, key, section.outputs[index].output, checked)
                 end)
-                section.outputs[index] = check
+                SetRowIndent(row, INDENT)
+                section.outputs[index] = row
             end
-            check.output = entry.output
-            check.labelText = entry.name
-            check.label:SetText(entry.name)
-
-            local column = (index - 1) % 2
-            local row = math.floor((index - 1) / 2)
-            check:SetPoint("TOPLEFT", 20 + column * OUTPUT_COLUMN_WIDTH, inner - row * ROW_HEIGHT)
-            SetCheckbox(check, chosen[entry.output] == true, disabled)
-            check:Show()
+            row.output = entry.output
+            row.labelText = entry.name
+            row.label:SetText(entry.name)
+            SetRow(row, chosen[entry.output] == true, disabled)
+            y = PlaceRow(row, content, y)
         end
         for index = #outputs + 1, #section.outputs do
             section.outputs[index]:Hide()
         end
-        inner = inner - math.ceil(#outputs / 2) * ROW_HEIGHT - 8
-
-        section:SetHeight(-inner)
-        section:SetPoint("TOPLEFT", content, "TOPLEFT", 16, y - 16)
-        y = y - 16 + inner - 8
     end
 
     content:SetHeight(-y + 8)
@@ -635,6 +684,8 @@ function lib:RegisterMessagePage(parentCategory)
     local addon = self
     local page = CreateFrame("Frame")
     page.name = addon.name
+    -- Under the addon's own category the page is listed, and titled, as Messages, like the native subpages
+    page.titleText = parentCategory and "Messages" or addon.name
 
     page.Refresh = function()
         RefreshPage(addon, page)

@@ -400,7 +400,7 @@ function Stub()
         __index = function(stub, key)
             if key == "SetScript" then
                 return function(self, script, handler) self.scripts[script] = handler end
-            elseif key == "CreateFontString" then
+            elseif key == "CreateFontString" or key == "CreateTexture" then
                 return function() return Stub() end
             elseif key == "GetStringHeight" then
                 return function() return 12 end

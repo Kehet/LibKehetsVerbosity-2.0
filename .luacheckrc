@@ -9,6 +9,7 @@ exclude_files = {
 
 -- WoW API and FrameXML
 read_globals = {
+    "C_Texture",
     "C_XMLUtil",
     "ChatTypeInfo",
     "CombatText_AddMessage",
