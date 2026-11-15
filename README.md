@@ -6,9 +6,9 @@ The addon declares its message types. The library shows each message where the p
 
 For each message type the player can set:
 
-- Show: turn the message on or off.
+- Enable: turn the message on or off. Off stops the text and the sound.
+- Play sound: turn the sound of the message on or off, if the addon gave the type a sound. Off keeps only the text.
 - Show in: one or more of the chat windows, the error frame, the raid warning frame, the boss emote frame and the floating combat text.
-- Play sound: turn the sound of the message on or off, if the addon gave the type a sound.
 
 One more setting, Mute all messages, turns off all messages and sounds of the addon.
 
@@ -79,6 +79,7 @@ local MyAddon = { name = "Kehet's MyAddon", chatPrefix = "|cFF009900MyAddon|r: "
 | `outputs` | `{ "chat" }` | Where the message is shown until the player changes it. See Outputs. |
 | `tag` | None | Text put in front of each message |
 | `sound` | None | `{ kit = soundKitID }` or `{ file = pathOrFileID }`, with an optional `channel` (default `"Master"`) |
+| `text` | `true` | `false` for a type that only plays its sound. Its section on the page has only Enable. It needs a `sound`. |
 
 ## Outputs
 
@@ -109,9 +110,10 @@ If none of the chosen outputs can show the message, for example because the chat
 |---|---|
 | `lib:Embed(addon, getProfile)` | Give the addon the functions below. `getProfile` is optional. |
 | `self:RegisterMessageTypes(types)` | Declare the message types. Call it once, before the first `Notify`. |
-| `self:Notify(key, message, options)` | Show the message and play the sound of the type. Returns `true` if the text was shown. A `nil` message only plays the sound. `{ force = true }` as options shows the text also when the type is off or all messages are muted. |
+| `self:Notify(key, message, options)` | Show the message and play the sound of the type. Returns `true` if the text was shown. A `nil` message only plays the sound. `{ force = true }` as options shows the text also when the type is off or all messages are muted, but does not play the sound. |
 | `self:IsMessageShown(key)` | Return whether `Notify` would show text of the type. |
-| `self:SetMessageShown(key, shown)` | Turn the text of the type on or off. |
+| `self:SetMessageShown(key, shown)` | Turn the type on or off, as Enable does. |
+| `self:SetMessageSound(key, on)` | Turn the sound of the type on or off, as Play sound does. Only for a type with a sound. |
 | `self:Print([chatFrame,] ...)` | Print to chat with the addon name in front. |
 | `self:RegisterMessagePage(parentCategory)` | Register a settings page with the message settings. Returns the Settings category. |
 | `self:OpenMessagePage()` | Open that page in the game settings. |

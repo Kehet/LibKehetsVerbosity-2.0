@@ -143,19 +143,49 @@ Equal(HasOutput("alert", "chat1"), true, "default chat window is ticked")
 Equal(HasOutput("alert", "raid"), true, "raid warning is ticked")
 Equal(HasOutput("alert", "errors"), false, "error frame is not ticked")
 
--- The sound has its own switch, and plays also when the text is off
+-- Turning the type off silences it too
 Reset()
 Set("alert", "shown", false)
 addon:Notify("alert", "text")
-Equal(#printed + #shownIn, 0, "text is off")
-Equal(#played, 1, "sound still plays")
-Equal(IsDisabled("alert", "outputs"), true, "outputs are disabled while the text is off")
+Equal(#printed + #shownIn + #played, 0, "type that is off shows and plays nothing")
+Equal(IsDisabled("alert", "outputs"), true, "outputs are disabled while the type is off")
+Equal(IsDisabled("alert", "sound"), true, "sound is disabled while the type is off")
+addon:Notify("alert", "forced", { force = true })
+Equal(#printed, 1, "force shows the text of a type that is off")
+Equal(#played, 0, "force does not play the sound of a type that is off")
+Set("alert", "shown", true)
+
+-- The sound has its own switch, to keep only the text
+Reset()
+Equal(IsDisabled("alert", "sound"), false, "sound is enabled while the type is on")
 Set("alert", "sound", false)
 addon:Notify("alert", "text")
-Equal(#played, 1, "sound is off")
-Set("alert", "shown", true)
+Equal(#played, 0, "sound is off")
+Equal(#printed, 1, "text still shows")
 Set("alert", "sound", true)
 Equal(profile.verbosity, nil, "settings back at their defaults are not saved")
+
+-- SetMessageSound, as the Play sound check box
+Reset()
+addon:SetMessageSound("alert", false)
+addon:Notify("alert", "text")
+Equal(#played, 0, "SetMessageSound turns the sound off")
+addon:SetMessageSound("alert", true)
+Equal(profile.verbosity, nil, "sound back on is not saved")
+Equal(pcall(addon.SetMessageSound, addon, "roll", false), false, "a type without a sound is an error")
+
+-- A type that only plays its sound
+Reset()
+local chime = NewAddon({})
+chime:RegisterMessageTypes({ drink = { text = false, sound = { kit = 7 } } })
+Equal(chime:Notify("drink", "ignored"), false, "sound only type shows no text")
+Equal(#printed + #shownIn, 0, "sound only type prints nothing")
+Equal(played[1], "kit 7 Master", "sound only type plays its sound")
+chime:SetMessageShown("drink", false)
+chime:Notify("drink")
+Equal(#played, 1, "sound only type that is off plays nothing")
+Equal(pcall(chime.RegisterMessageTypes, chime, { bad = { text = false } }), false,
+    "a type with neither text nor sound is an error")
 
 -- Sound without text
 Reset()
