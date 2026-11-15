@@ -1,6 +1,6 @@
 -- Message types an addon declares, printed where the player chose, with a native settings page to choose it.
 -- Needs only LibStub: no Ace3.
-local MAJOR, MINOR = "LibKehetsVerbosity-2.0", 4
+local MAJOR, MINOR = "LibKehetsVerbosity-2.0", 5
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return
@@ -316,14 +316,18 @@ local function PlayTypeSound(sound)
 end
 
 --- Declare the message types of the addon. Call it once, before the first Notify.
--- @param types Table of key = { name, desc, order, shown, outputs, tag, sound }.
+-- @param types Table of key = { name, desc, order, shown, outputs, tag, sound, text }.
 -- shown (default true) and outputs (default { "chat" }) are what the player gets until they change it.
 -- An output is "chat" for the default chat window, "errors", "raid", "emote" or "combat".
 -- tag is put in front of each message. sound is { kit = soundKitID } or { file = pathOrFileID },
--- with an optional channel.
+-- with an optional channel. text = false makes a type that only plays its sound: the page then
+-- has only its Enable check box.
 function lib:RegisterMessageTypes(types)
     local registered = {}
     for key, declaration in pairs(types) do
+        if declaration.text == false and not declaration.sound then
+            error(MAJOR .. ": message type '" .. tostring(key) .. "' has neither text nor sound", 2)
+        end
         local outputs = declaration.outputs or { "chat" }
         for _, output in ipairs(outputs) do
             if output ~= "chat" and not FRAME_OUTPUTS[output] then
@@ -337,6 +341,7 @@ function lib:RegisterMessageTypes(types)
             order = declaration.order,
             tag = declaration.tag,
             sound = declaration.sound,
+            text = declaration.text ~= false,
             outputs = outputs,
             defaults = {
                 shown = declaration.shown ~= false,
@@ -348,19 +353,21 @@ function lib:RegisterMessageTypes(types)
 end
 
 --- Show a message of a declared type where the player wants it, and play the sound of the type.
--- @param message Text to show, or nil to only play the sound.
--- @param options Optional { force = true } to show the text also when the type is off or everything is muted.
+-- The sound plays only while the type is on, so turning a type off silences it too.
+-- @param message Text to show, or nil to only play the sound. A type with text = false takes none.
+-- @param options Optional { force = true } to show the text also when the type is off or everything is
+-- muted. The sound still follows the settings.
 -- @return true if the text was shown.
 function lib:Notify(key, message, options)
     local messageType = GetType(self, key)
-    local muted = IsMuted(self)
+    local enabled = not IsMuted(self) and GetSetting(self, key, "shown")
 
-    if messageType.sound and not muted and GetSetting(self, key, "sound") then
+    if messageType.sound and enabled and GetSetting(self, key, "sound") then
         PlayTypeSound(messageType.sound)
     end
 
     local force = options and options.force
-    if message == nil or not force and (muted or not GetSetting(self, key, "shown")) then
+    if message == nil or not messageType.text or not force and not enabled then
         return false
     end
 
@@ -382,6 +389,14 @@ end
 function lib:SetMessageShown(key, shown)
     GetType(self, key)
     SetSetting(self, key, "shown", shown and true or false)
+end
+
+--- Turn the sound of a type on or off, as the Play sound check box does.
+function lib:SetMessageSound(key, on)
+    if not GetType(self, key).sound then
+        error(MAJOR .. ": message type '" .. tostring(key) .. "' has no sound", 2)
+    end
+    SetSetting(self, key, "sound", on and true or false)
 end
 
 -- The text in front of chat lines: the addon's chatPrefix, or its name in the AceConsole-3.0 colour.
@@ -426,12 +441,12 @@ local function GetSortedKeys(addon)
     return keys
 end
 
--- A control is greyed out while all messages are muted, and the outputs also while the text is off
+-- A control is greyed out while all messages are muted, and the sound and outputs also while the type is off
 local function IsDisabled(addon, key, field)
     if IsMuted(addon) then
         return true
     end
-    return field == "outputs" and not GetSetting(addon, key, "shown")
+    return field ~= "shown" and not GetSetting(addon, key, "shown")
 end
 
 -- Chat windows by their number, then the frames, then the outputs of other addons
@@ -461,13 +476,21 @@ lib.internal = {
     SetMuted = SetMuted,
 }
 
--- Settings page, laid out like the native settings lists: a title over a divider, section headers,
--- and rows with the label on the left and the check box in a column right of the middle
+-- Settings page: a title over a divider like the native settings, then a section for each type.
+-- The check boxes are cells in a grid, the box left of its label, so a section takes a few lines.
 
-local ROW_HEIGHT = 26
+local CELL_HEIGHT = 24
+local CELL_MIN_WIDTH = 190
+local LEGEND_HEIGHT = 7
+local FIELDSET_PAD = 8
+-- The native section header: 45 high, with the title 16 down
 local SECTION_HEIGHT = 45
-local LABEL_LEFT = 37
-local INDENT = 15
+local SECTION_TITLE_TOP = 16
+-- The native list puts 9 between its elements
+local ELEMENT_SPACING = 9
+-- Lined up with the labels of the native rows
+local GRID_LEFT = 37
+local GRID_RIGHT = 10
 local HEADER_HEIGHT = 56
 
 local function HasTemplate(name)
@@ -478,95 +501,141 @@ local function HasAtlas(name)
     return C_Texture ~= nil and C_Texture.GetAtlasInfo ~= nil and C_Texture.GetAtlasInfo(name) ~= nil
 end
 
-local function ShowRowTooltip(row)
-    if row.hover then
-        row.hover:Show()
+local function ShowCellTooltip(cell)
+    cell.hover:Show()
+    GameTooltip:SetOwner(cell, "ANCHOR_RIGHT")
+    GameTooltip:SetText(cell.labelText, 1, 1, 1)
+    if cell.tooltip then
+        GameTooltip:AddLine(cell.tooltip, nil, nil, nil, true)
     end
-    if row.tooltip then
-        GameTooltip:SetOwner(row.check or row, "ANCHOR_RIGHT")
-        GameTooltip:SetText(row.labelText, 1, 1, 1)
-        GameTooltip:AddLine(row.tooltip, nil, nil, nil, true)
-        GameTooltip:Show()
-    end
+    GameTooltip:Show()
 end
 
-local function HideRowTooltip(row)
-    if row.hover then
-        row.hover:Hide()
-    end
+local function HideCellTooltip(cell)
+    cell.hover:Hide()
     GameTooltip:Hide()
 end
 
-local function SetRowIndent(row, indent)
-    row.label:ClearAllPoints()
-    row.label:SetPoint("LEFT", row, "LEFT", LABEL_LEFT + indent, 0)
-    row.label:SetPoint("RIGHT", row, "CENTER", -85, 0)
-end
+-- A check box with its label on the right. A click on the label clicks the box. The tooltip
+-- also gives the whole label, which the cell cuts when it is too long for the column.
+local function CreateCell(parent, label, tooltip, onClick)
+    local cell = CreateFrame("Frame", nil, parent)
+    cell:SetHeight(CELL_HEIGHT)
+    cell.labelText = label
+    cell.tooltip = tooltip
 
--- A row with a label. With onClick it gets a check box, and a click on the label clicks the box,
--- as in the native settings.
-local function CreateRow(parent, label, tooltip, onClick)
-    local row = CreateFrame("Frame", nil, parent)
-    row:SetHeight(ROW_HEIGHT)
-    row.labelText = label
-    row.tooltip = tooltip
+    local native = HasTemplate("SettingsCheckboxTemplate")
+    cell.check = CreateFrame("CheckButton", nil, cell, native and "SettingsCheckboxTemplate" or "UICheckButtonTemplate")
+    cell.check:SetSize(24, 24)
+    cell.check:SetPoint("LEFT", cell, "LEFT", 0, 0)
+    cell.check:SetScript("OnClick", function(check)
+        onClick(check:GetChecked() and true or false)
+    end)
+    cell.check:SetScript("OnEnter", function() ShowCellTooltip(cell) end)
+    cell.check:SetScript("OnLeave", function() HideCellTooltip(cell) end)
+    -- The highlight of the native box covers a whole settings row; the cell has its own
+    if type(cell.check.HoverBackground) == "table" then
+        cell.check.HoverBackground:Hide()
+        cell.check.HoverBackground:SetAlpha(0)
+    end
 
-    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    row.label:SetJustifyH("LEFT")
-    row.label:SetWordWrap(false)
-    row.label:SetText(label)
-    SetRowIndent(row, 0)
+    cell.label = cell:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    cell.label:SetJustifyH("LEFT")
+    cell.label:SetWordWrap(false)
+    cell.label:SetPoint("LEFT", cell.check, "RIGHT", 4, 0)
+    cell.label:SetPoint("RIGHT", cell, "RIGHT", -4, 0)
+    cell.label:SetText(label)
 
-    if onClick then
-        local native = HasTemplate("SettingsCheckboxTemplate")
-        row.check = CreateFrame("CheckButton", nil, row, native and "SettingsCheckboxTemplate" or "UICheckButtonTemplate")
-        if not native then
-            row.check:SetSize(26, 26)
+    cell.hover = cell:CreateTexture(nil, "BACKGROUND")
+    cell.hover:SetAllPoints()
+    cell.hover:SetColorTexture(1, 1, 1, 0.1)
+    cell.hover:Hide()
+
+    cell:EnableMouse(true)
+    cell:SetScript("OnMouseUp", function()
+        if cell.check:IsEnabled() then
+            cell.check:Click()
         end
-        row.check:SetPoint("LEFT", row, "CENTER", -80, 0)
-        row.check:SetScript("OnClick", function(check)
-            onClick(check:GetChecked() and true or false)
-        end)
-        row.check:SetScript("OnEnter", function() ShowRowTooltip(row) end)
-        row.check:SetScript("OnLeave", function() HideRowTooltip(row) end)
-
-        row:EnableMouse(true)
-        row:SetScript("OnMouseUp", function()
-            if row.check:IsEnabled() then
-                row.check:Click()
-            end
-        end)
-    end
-
-    -- The native check box brings the highlight of the whole row; make one where it does not
-    local hover = row.check and row.check.HoverBackground
-    if type(hover) == "table" then
-        row.hover = hover
-    else
-        row.hover = row:CreateTexture(nil, "BACKGROUND")
-        row.hover:SetPoint("TOPLEFT", -10, 0)
-        row.hover:SetPoint("BOTTOMRIGHT", -5, 0)
-        row.hover:SetColorTexture(1, 1, 1, 0.1)
-        row.hover:Hide()
-    end
-
-    row:SetScript("OnEnter", ShowRowTooltip)
-    row:SetScript("OnLeave", HideRowTooltip)
-    return row
+    end)
+    cell:SetScript("OnEnter", ShowCellTooltip)
+    cell:SetScript("OnLeave", HideCellTooltip)
+    return cell
 end
 
-local function SetRow(row, checked, disabled)
-    row.check:SetChecked(checked and true or false)
-    row.check:SetEnabled(not disabled)
-    row.label:SetFontObject(disabled and "GameFontDisable" or "GameFontNormal")
+local function SetCell(cell, checked, disabled)
+    cell.check:SetChecked(checked and true or false)
+    cell.check:SetEnabled(not disabled)
+    cell.label:SetFontObject(disabled and "GameFontDisable" or "GameFontNormal")
 end
 
-local function PlaceRow(row, content, y)
-    row:ClearAllPoints()
-    row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
-    row:SetPoint("RIGHT", content, "RIGHT", 0, 0)
-    row:Show()
-    return y - ROW_HEIGHT
+-- Places the cells left to right in columns of the same width, and returns the y under the last line
+local function PlaceGrid(cells, content, left, y, columns, width)
+    for index, cell in ipairs(cells) do
+        local column = (index - 1) % columns
+        local line = math.floor((index - 1) / columns)
+        cell:ClearAllPoints()
+        cell:SetPoint("TOPLEFT", content, "TOPLEFT", left + column * width, y - line * CELL_HEIGHT)
+        cell:SetWidth(width)
+        cell:Show()
+    end
+    return y - math.ceil(#cells / columns) * CELL_HEIGHT
+end
+
+local function CreateEdge(box)
+    local edge = box:CreateTexture(nil, "BORDER")
+    edge:SetColorTexture(1, 1, 1, 1)
+    table.insert(box.edges, edge)
+    return edge
+end
+
+-- A frame drawn around a group of cells, with the legend on its top line, like a fieldset.
+-- It is drawn with plain textures, so it looks the same on every client.
+local function CreateFieldset(parent, legend)
+    local box = CreateFrame("Frame", nil, parent)
+    box.edges = {}
+
+    box.fill = box:CreateTexture(nil, "BACKGROUND")
+    box.fill:SetAllPoints()
+    box.fill:SetColorTexture(0, 0, 0, 0.25)
+
+    box.legend = box:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    box.legend:SetPoint("LEFT", box, "TOPLEFT", 10, 0)
+    box.legend:SetText(legend)
+
+    local left = CreateEdge(box)
+    left:SetPoint("TOPLEFT")
+    left:SetPoint("BOTTOMLEFT")
+    left:SetWidth(1)
+
+    local right = CreateEdge(box)
+    right:SetPoint("TOPRIGHT")
+    right:SetPoint("BOTTOMRIGHT")
+    right:SetWidth(1)
+
+    local bottom = CreateEdge(box)
+    bottom:SetPoint("BOTTOMLEFT")
+    bottom:SetPoint("BOTTOMRIGHT")
+    bottom:SetHeight(1)
+
+    -- The top line stops on both sides of the legend
+    local topLeft = CreateEdge(box)
+    topLeft:SetPoint("TOPLEFT")
+    topLeft:SetPoint("RIGHT", box.legend, "LEFT", -4, 0)
+    topLeft:SetHeight(1)
+
+    local topRight = CreateEdge(box)
+    topRight:SetPoint("LEFT", box.legend, "RIGHT", 4, 0)
+    topRight:SetPoint("TOPRIGHT")
+    topRight:SetHeight(1)
+
+    return box
+end
+
+local function SetFieldset(box, disabled)
+    box.legend:SetFontObject(disabled and "GameFontDisableSmall" or "GameFontNormalSmall")
+    for _, edge in ipairs(box.edges) do
+        edge:SetVertexColor(1, 0.82, 0, disabled and 0.15 or 0.35)
+    end
 end
 
 local function BuildPage(addon, page)
@@ -599,7 +668,7 @@ local function BuildPage(addon, page)
     page.scroll:SetScrollChild(content)
     page.content = content
 
-    page.mute = CreateRow(content, "Mute all messages",
+    page.mute = CreateCell(content, "Mute all messages",
         "Turn off every message and sound on this page. Answers to slash commands still print.",
         function(checked)
             SetMuted(addon, checked)
@@ -615,72 +684,107 @@ local function BuildPage(addon, page)
         section.title:SetJustifyH("LEFT")
         section.title:SetText(messageType.name)
 
-        section.shown = CreateRow(content, "Show", messageType.desc or "Show this message.", function(checked)
+        local enableTip = messageType.text and "Show this message." or "Play the sound of this message."
+        section.shown = CreateCell(content, "Enable", messageType.desc or enableTip, function(checked)
             SetSetting(addon, key, "shown", checked)
             page:Refresh()
         end)
+        section.toggles = { section.shown }
 
-        if messageType.sound then
-            section.sound = CreateRow(content, "Play sound",
-                "Play the sound of this message. The sound plays also when the message is not shown.",
+        -- A type that has only a sound plays it while it is on, so it needs no other control
+        if messageType.sound and messageType.text then
+            section.sound = CreateCell(content, "Play sound",
+                "Play the sound of this message. Turn it off to keep only the text.",
                 function(checked)
                     SetSetting(addon, key, "sound", checked)
                 end)
+            table.insert(section.toggles, section.sound)
         end
 
-        section.showIn = CreateRow(content, "Show in", "Where the message is shown. You can choose more than one.")
+        if messageType.text then
+            section.showIn = CreateFieldset(content, "Show in")
+        end
 
         page.sections[key] = section
     end
+end
+
+-- The fieldset of outputs of one type, at y. Returns the y under it.
+local function PlaceOutputs(addon, key, section, content, outputs, y, width, columns, cellWidth)
+    local disabled = IsDisabled(addon, key, "outputs")
+    SetFieldset(section.showIn, disabled)
+    -- The legend sits on the top line, inside the spacing above the box
+    y = y - ELEMENT_SPACING
+    local boxTop = y
+    y = y - LEGEND_HEIGHT - FIELDSET_PAD / 2
+
+    local chosen = GetOutputs(addon, key)
+    local cells = {}
+    for index, entry in ipairs(outputs) do
+        local cell = section.outputs[index]
+        if not cell then
+            cell = CreateCell(content, "", nil, function(checked)
+                SetOutput(addon, key, section.outputs[index].output, checked)
+            end)
+            section.outputs[index] = cell
+        end
+        cell.output = entry.output
+        cell.labelText = entry.name
+        cell.label:SetText(entry.name)
+        SetCell(cell, chosen[entry.output] == true, disabled)
+        cells[index] = cell
+    end
+    for index = #outputs + 1, #section.outputs do
+        section.outputs[index]:Hide()
+    end
+    y = PlaceGrid(cells, content, GRID_LEFT + FIELDSET_PAD, y, columns, cellWidth)
+    y = y - FIELDSET_PAD / 2
+
+    local box = section.showIn
+    box:ClearAllPoints()
+    box:SetPoint("TOPLEFT", content, "TOPLEFT", GRID_LEFT, boxTop)
+    box:SetPoint("BOTTOMRIGHT", content, "TOPLEFT", width - GRID_RIGHT, y)
+    -- Under the cells, which are one level above the content
+    box:SetFrameLevel(content:GetFrameLevel())
+    box:Show()
+    y = y - ELEMENT_SPACING
+    return y
 end
 
 -- Lays the page out again, because the open chat windows and the loaded addons change between visits
 local function RefreshPage(addon, page)
     local content = page.content
     local width = page.scroll:GetWidth()
-    content:SetWidth(type(width) == "number" and width > 0 and width or 600)
+    width = type(width) == "number" and width > 0 and width or 600
+    content:SetWidth(width)
 
-    SetRow(page.mute, IsMuted(addon), false)
-    local y = PlaceRow(page.mute, content, -4)
+    local columns = math.max(1, math.floor((width - GRID_LEFT - GRID_RIGHT) / CELL_MIN_WIDTH))
+    local cellWidth = (width - GRID_LEFT - GRID_RIGHT) / columns
+
+    SetCell(page.mute, IsMuted(addon), false)
+    local y = PlaceGrid({ page.mute }, content, GRID_LEFT, -4, columns, cellWidth)
+
+    -- The outputs are in a fieldset, so their columns are a little narrower
+    local inner = width - GRID_LEFT - GRID_RIGHT - 2 * FIELDSET_PAD
+    local outputColumns = math.max(1, math.floor(inner / CELL_MIN_WIDTH))
+    local outputWidth = inner / outputColumns
 
     local outputs = GetSortedOutputs()
     for _, key in ipairs(GetSortedKeys(addon)) do
         local section = page.sections[key]
 
         section.title:ClearAllPoints()
-        section.title:SetPoint("TOPLEFT", content, "TOPLEFT", 7, y - 16)
+        section.title:SetPoint("TOPLEFT", content, "TOPLEFT", 7, y - SECTION_TITLE_TOP)
         y = y - SECTION_HEIGHT
 
-        SetRow(section.shown, GetSetting(addon, key, "shown"), IsDisabled(addon, key, "shown"))
-        y = PlaceRow(section.shown, content, y)
-
+        SetCell(section.shown, GetSetting(addon, key, "shown"), IsDisabled(addon, key, "shown"))
         if section.sound then
-            SetRow(section.sound, GetSetting(addon, key, "sound"), IsDisabled(addon, key, "sound"))
-            y = PlaceRow(section.sound, content, y)
+            SetCell(section.sound, GetSetting(addon, key, "sound"), IsDisabled(addon, key, "sound"))
         end
+        y = PlaceGrid(section.toggles, content, GRID_LEFT, y, columns, cellWidth)
 
-        local disabled = IsDisabled(addon, key, "outputs")
-        section.showIn.label:SetFontObject(disabled and "GameFontDisable" or "GameFontNormal")
-        y = PlaceRow(section.showIn, content, y)
-
-        local chosen = GetOutputs(addon, key)
-        for index, entry in ipairs(outputs) do
-            local row = section.outputs[index]
-            if not row then
-                row = CreateRow(content, "", nil, function(checked)
-                    SetOutput(addon, key, section.outputs[index].output, checked)
-                end)
-                SetRowIndent(row, INDENT)
-                section.outputs[index] = row
-            end
-            row.output = entry.output
-            row.labelText = entry.name
-            row.label:SetText(entry.name)
-            SetRow(row, chosen[entry.output] == true, disabled)
-            y = PlaceRow(row, content, y)
-        end
-        for index = #outputs + 1, #section.outputs do
-            section.outputs[index]:Hide()
+        if section.showIn then
+            y = PlaceOutputs(addon, key, section, content, outputs, y, width, outputColumns, outputWidth)
         end
     end
 
@@ -743,6 +847,7 @@ local MIXINS = {
     "Notify",
     "IsMessageShown",
     "SetMessageShown",
+    "SetMessageSound",
     "RegisterMessagePage",
     "OpenMessagePage",
 }
