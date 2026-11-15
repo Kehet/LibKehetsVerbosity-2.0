@@ -1,6 +1,6 @@
 -- Message types an addon declares, printed where the player chose, with a native settings page to choose it.
 -- Needs only LibStub: no Ace3.
-local MAJOR, MINOR = "LibKehetsVerbosity-2.0", 3
+local MAJOR, MINOR = "LibKehetsVerbosity-2.0", 4
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then
     return
@@ -692,6 +692,8 @@ end
 function lib:RegisterMessagePage(parentCategory)
     local addon = self
     local page = CreateFrame("Frame")
+    -- An unparented frame starts shown, so the settings panel's first Show() would not fire OnShow
+    page:Hide()
     page.name = addon.name
     -- Under the addon's own category the page is listed, and titled, as Messages, like the native subpages
     page.titleText = parentCategory and "Messages" or addon.name
